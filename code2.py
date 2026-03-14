@@ -3,6 +3,12 @@ import requests_cache
 import pandas as pd 
 import numpy as np 
 from retry_requests import retry 
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import os
+
+os.makedirs("results", exist_ok=True)
 
 def pull_data():
     cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
@@ -122,14 +128,14 @@ def seasonal_amplitude_phase(a1, b1):
 
 #Task 2: Residual dynamics 
 
-def fit_ar1_residuals(residuals):
+def fit_ar1_residuals(des_residuals): #fitting deseasonalized residuals 
     """
     Fit AR(1) model on deseasonalized series.
     Returns phi, kappa, innovation std, AIC, BIC, residuals.
     """
-    X_curr = residuals[1:]
-    X_lag = residuals[:-1]
-    X_lag = sm.add_constant(X_lag)  # optional intercept
+    X_curr = des_residuals[1:]
+    X_lag = des_residuals[:-1]
+    X_lag = sm.add_constant(X_lag)  
     model = sm.OLS(X_curr, X_lag).fit()
     
     phi = model.params[1]  # AR(1) coefficient
@@ -140,6 +146,32 @@ def fit_ar1_residuals(residuals):
     epsilon = model.resid
     
     return phi, kappa, sigma_e, aic, bic, epsilon
+
+#Task 3: Seasonal volatility 
+
+def plot_rolling_volatility(epsilon, rolling_vol, dates):
+    """
+    Plots innovations (epsilon) and rolling volatility on the training set.
+    """
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    ax.plot(dates, epsilon, color='gray', linewidth=0.5, alpha=0.6, label='innovations (ε)')
+    ax.plot(dates, rolling_vol, color='#1338BE', linewidth=1.5, label='rolling volatility (31-day std)')
+
+    ax.axhline(0, color='black', linewidth=0.5, linestyle='--', alpha=0.3)
+
+    ax.set_title('Rolling Volatility - Train Set', fontsize=13)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Temperature (°C)')
+    ax.legend(fontsize=11)
+    ax.xaxis.set_major_locator(mdates.YearLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig("results/rolling_volatility.png", dpi=150)
+    plt.show()
 
 def main():
     #Pull raw data, print some metadata
@@ -183,7 +215,7 @@ def main():
     t_test = np.arange(len(train_df), len(train_df) + len(test_df))
     y_test = test_df["temperature_2m_mean"].values
     u_test = compute_seasonal_mean(t_test, beta_hat)
-    residuals_test = y_test - u_test
+    #residuals_test = y_test - u_test
 
     #Save the seasonal mean (u) for the full sample 
     t_full = np.arange(len(daily_dataframe_cleaned))
@@ -198,5 +230,25 @@ def main():
     print("Fitted parameters:", beta_hat)
     print("Amplitude:", alpha, "Phase:", theta)
 
+    #Task 2: Residual dynamics on training set 
+
+    #Use the residuals of the training set: deseasonalized: y_train - u_train 
+
+    phi, kappa, sigma_e, aic, bic, epsilon = fit_ar1_residuals(residuals_train)
+    print("AR(1) coefficient (phi) (don't have to report):", phi)
+    print("Mean reversion rate (kappa) (don't have to report):", kappa)
+    print("Innovation std (sigma_e):", sigma_e)
+    print("AIC:", aic)
+    print("BIC:", bic)
+
+    #Task 3: Seasonal volatility 
+    #Compute the fitted residual innovations (new, unexpected information that could not have been predicted and arrived today - residuals)
+    print("epsilon", epsilon)
+
+    #Rolling standard deviation (30 days)
+    train_df['date'] = pd.to_datetime(train_df['date'])
+    rolling_vol = pd.Series(epsilon).rolling(window=31, center=True).std()
+    plot_rolling_volatility(epsilon, rolling_vol, train_df['date'].iloc[1:].values)
+    
 if __name__ == "__main__":
     main()
