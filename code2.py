@@ -175,6 +175,53 @@ def plot_rolling_volatility(epsilon, rolling_vol, dates):
     plt.savefig("results/rolling_volatility.png", dpi=150)
     plt.show()
 
+#Part 2.5: Pricing of weather derivatives
+    
+def calculate_cat(temperatures):
+    return np.sum(temperatures)
+
+def calculate_hdd(temperatures, threshold = 18):
+    return np.sum(max(threshold-temperatures,0))
+
+def calculate_cat_payoff(temperatures, N, K):
+    return N * max(calculate_cat(temperatures) - K, 0)
+
+def calculate_hdd_payoff(temperatures, N, K):
+    return N * max(calculate_hdd(temperatures) - K, 0)
+
+def asian_option_payoff(day_degree_index, cap, floor, alpha, beta, strike, call_strike, put_strike, ):
+    """
+    Accumulated day_degree_index: CAT or HDD summed over the contract period.
+    K, K1, K2: strike value minimimumal, then K1 - strike value for call leg, and K2 - strike for put leg of the collar.
+    Alpha, Beta: dollar amount per degree day
+    """
+    call_option_cap = min(alpha*max(day_degree_index - strike,0), cap)
+    put_option_floor = min(alpha*max(strike - day_degree_index,0), floor)
+    collar = min(alpha * max(day_degree_index - call_strike, 0), cap) - min(beta * max(put_strike - day_degree_index,0), floor)
+    return call_option_cap, put_option_floor, collar
+
+def simulate_mc_paths():
+    pass
+
+def monte_carlo_price(M, n_days, r, tau2, N, cat_strike=None, hdd_strike=None):
+    paths = simulate_mc_paths(M, n_days)
+    cat_payoffs = []
+    hdd_payoffs = []
+
+    for path in paths:
+        if cat_strike is not None:
+            cat_payoffs.append(calculate_cat_payoff(path, N, cat_strike))
+        if hdd_strike is not None:
+            hdd_payoffs.append(calculate_hdd_payoff(path, N, hdd_strike))
+    
+    prices = {}
+    if cat_payoffs:
+        prices["CAT"] = np.exp(-r * tau2) * np.mean(cat_payoffs)
+    if hdd_payoffs:
+        prices["HDD"] = np.exp(-r * tau2) * np.mean(hdd_payoffs)
+
+    return prices
+
 def main():
     #Pull raw data, print some metadata
     response = pull_data()
