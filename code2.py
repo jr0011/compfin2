@@ -7,6 +7,8 @@ import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
+from matplotlib.patches import Patch
+import calendar
 
 os.makedirs("results", exist_ok=True)
 
@@ -245,7 +247,7 @@ def plot_simulated_paths(paths, mu_t, n_plot=30):
     plt.figure(figsize=(12,6))
 
     for i in idx:
-        plt.plot(paths[i], alpha=0.35, linewidth=1)
+        plt.plot(paths[i], alpha=0.35, linewidth=0.5)
 
     # deterministic mean
     plt.plot(mu_t[:n_days], color="black", linewidth=1.5, label="Deterministic mean")
@@ -261,10 +263,183 @@ def plot_simulated_paths(paths, mu_t, n_plot=30):
 
 #Path 2.6: Request for Quote price - simulate many MC paths, and compute prices for each contract in the quote 
     
-def quote_price_engine(contracts, M, n_days, phi, sigma_t, mu_t, r):
-    
+def quote_price_engine(contracts_df, M, phi, sigma_t_full, beta_hat, r, X0):
+    """
+    Prices of all contracts in the contract specifications using Monte Carlo simulation.
+    Returns a DataFrame with contract_id and Monte Carlo price.
+    """
 
-    pass
+    prices = []
+
+    for idx, row in contracts_df.iterrows():
+        contract_id = row['contract_id']
+        contract_type = row['contract_type']
+        start_date = pd.to_datetime(row['start_date'])
+        end_date = pd.to_datetime(row['end_date'])
+        strike = row['strike']
+        N = row['notional']
+        
+        #number of days in contract
+        n_days = (end_date - start_date).days + 1
+        #create future t index
+        t0 = len(sigma_t_full)  #start after historical data
+        t_future = np.arange(t0, t0 + n_days)
+
+        mu_future = compute_seasonal_mean(t_future, beta_hat)
+        sigma_future = np.tile(sigma_t_full, int(np.ceil(n_days / len(sigma_t_full))))[:n_days]
+        paths = simulate_mc_paths(M, n_days, phi, sigma_future, mu_future, X0)
+
+        #compute payoffs depending on contract type
+        if 'CALL' in contract_type:
+            if 'CAT' in contract_type:
+                payoffs = np.array([calculate_cat_payoff(path, N, strike) for path in paths])
+            elif 'HDD' in contract_type:
+                payoffs = np.array([calculate_hdd_payoff(path, N, strike) for path in paths])
+            else:
+                raise ValueError(f"Unknown call contract type: {contract_type}")
+        elif 'FUT' in contract_type:
+            # futures: payoff is just the total index multiplied by notional
+            if 'CAT' in contract_type:
+                payoffs = np.array([N * calculate_cat(path) for path in paths])
+            elif 'HDD' in contract_type:
+                payoffs = np.array([N * calculate_hdd(path) for path in paths])
+            else:
+                raise ValueError(f"Unknown future contract type: {contract_type}")
+        else:
+            raise ValueError(f"Unknown contract type: {contract_type}")
+
+        # discount payoffs to valuation date
+        tau_days = (pd.to_datetime(row['valuation_date']) - start_date).days
+        tau = tau_days / 365.0  # convert to years
+        discounted_price = np.exp(-r * tau) * np.mean(payoffs)
+
+        prices.append({
+            'contract_id': contract_id,
+            'price': discounted_price,
+            'payoffs': payoffs  # store for plotting
+        })
+
+    return pd.DataFrame(prices)
+
+def plot_pricing_summary_table(priced_contracts):
+    """
+    Saves a clean HTML table (readable with 150+ rows) and also returns the summary DataFrame.
+    """
+    rows = []
+    for _, row in priced_contracts.iterrows():
+        p = row['payoffs']
+        ctype = 'CAT' if 'CAT' in row['contract_id'] else 'HDD'
+        rows.append({
+            'Contract':       row['contract_id'],
+            'Type':           ctype,
+            'MC Price':       round(float(row['price']), 2),
+            'Mean Payoff':    round(float(np.mean(p)), 2),
+            'Std Dev':        round(float(np.std(p)), 2),
+            '95th Pct':       round(float(np.percentile(p, 95)), 2),
+            'P(payoff > 0)':  f"{(p > 0).mean()*100:.1f}%"
+        })
+
+    summary_df = pd.DataFrame(rows)
+
+    html_rows = ""
+    for i, r in enumerate(rows):
+        bg      = "#f5f9ff" if r['Type'] == 'CAT' else "#fffaf0"
+        stripe  = "" if i % 2 == 0 else "filter:brightness(0.96)"
+        type_color = "#0C447C" if r['Type'] == 'CAT' else "#633806"
+        type_bg    = "#E6F1FB" if r['Type'] == 'CAT' else "#FAEEDA"
+        html_rows += f"""
+        <tr style="background:{bg};{stripe}">
+            <td>{r['Contract']}</td>
+            <td><span style="background:{type_bg};color:{type_color};padding:2px 8px;
+                border-radius:4px;font-size:11px;font-weight:600">{r['Type']}</span></td>
+            <td>€{r['MC Price']:,.2f}</td>
+            <td>€{r['Mean Payoff']:,.2f}</td>
+            <td>€{r['Std Dev']:,.2f}</td>
+            <td>€{r['95th Pct']:,.2f}</td>
+            <td>{r['P(payoff > 0)']}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Contract Pricing Summary</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; padding: 24px; background: #fafafa; }}
+  h2   {{ font-size: 18px; font-weight: 500; margin-bottom: 16px; color: #222; }}
+  table {{ border-collapse: collapse; width: 100%; background: white;
+           border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }}
+  th   {{ background: #2C2C2A; color: white; font-size: 12px; font-weight: 500;
+          padding: 10px 12px; text-align: left; }}
+  td   {{ padding: 8px 12px; font-size: 12px; color: #333;
+          border-bottom: 0.5px solid #e8e8e8; }}
+  tr:last-child td {{ border-bottom: none; }}
+  tr:hover td {{ background: rgba(0,0,0,0.03) !important; }}
+</style>
+</head>
+<body>
+<h2>Contract Pricing Summary — {len(rows)} contracts</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Contract</th><th>Type</th><th>MC Price</th>
+      <th>Mean Payoff</th><th>Std Dev</th><th>95th Pct</th><th>P(payoff &gt; 0)</th>
+    </tr>
+  </thead>
+  <tbody>{html_rows}</tbody>
+</table>
+</body>
+</html>"""
+
+    path = "results/pricing_summary_table.html"
+    with open(path, "w") as f:
+        f.write(html)
+    print(f"Summary table saved to {path} — open in browser to view.")
+
+    # also print to terminal
+    print(summary_df.to_string(index=False))
+    return summary_df
+
+def plot_payoff_boxplots(priced_contracts):
+    ids = priced_contracts['contract_id'].tolist()
+    all_payoffs = [row['payoffs'] for _, row in priced_contracts.iterrows()]
+    types = ['CAT' if 'CAT' in cid else 'HDD' for cid in ids]
+    colors = ['#378ADD' if t == 'CAT' else '#BA7517' for t in types]
+
+    fig, ax = plt.subplots(figsize=(22, 7))
+
+    bp = ax.boxplot(
+        all_payoffs,
+        patch_artist=True,
+        medianprops=dict(color='white', linewidth=1.5),
+        whiskerprops=dict(linewidth=0.8),
+        capprops=dict(linewidth=0.8),
+        flierprops=dict(marker='o', markersize=2, alpha=0.3, linestyle='none'),
+        widths=0.7
+    )
+
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+
+    for flier, color in zip(bp['fliers'], colors):
+        flier.set_markerfacecolor(color)
+        flier.set_markeredgecolor(color)
+
+    ax.set_xticks(range(1, len(ids) + 1))
+    ax.set_xticklabels(ids, rotation=90, ha='right', fontsize=5)
+    ax.set_title('Payoff Distribution by Contract', fontsize=13)
+    ax.set_xlabel('Contract')
+    ax.set_ylabel('Payoff (€)')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    ax.legend(handles=[Patch(facecolor='#378ADD', alpha=0.75, label='CAT'),
+                       Patch(facecolor='#BA7517', alpha=0.75, label='HDD')], fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig("results/payoff_boxplots.png", dpi=150)
+    plt.show()
 
 def main():
     #Pull raw data, print some metadata
@@ -360,6 +535,32 @@ def main():
 
     paths = simulate_mc_paths(M, n_days, phi, sigma_future, mu_future, X0)
     plot_simulated_paths(paths, mu_future)
+
+    #Part 2.6: Request for Quote price 
+    contracts_df = pd.read_csv("contract_specifications.csv")
+
+    M_mc = 10000
+
+    r = contracts_df['rate'].iloc[0]  # assuming same risk-free rate for all contracts
+
+    priced_contracts = quote_price_engine(
+        contracts_df,
+        M=M_mc,
+        phi=phi,
+        sigma_t_full=sigma_t,
+        beta_hat=beta_hat,
+        r=r,
+        X0=X0
+    )
+
+    # Print prices
+    print(priced_contracts[['contract_id','price']])
+
+    #Plots 
+    plot_payoff_boxplots(priced_contracts)
+    summary = plot_pricing_summary_table(priced_contracts)
+    print(summary.to_string(index=False))
+
 
 if __name__ == "__main__":
     main()
