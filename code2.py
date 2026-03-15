@@ -151,6 +151,19 @@ def fit_ar1_residuals(des_residuals): #fitting deseasonalized residuals
     
     return phi, kappa, sigma_e, aic, bic, epsilon
 
+def fit_seasonal_volatility(epsilon, t_train, w=2*np.pi/365.25):
+    rolling_vol = pd.Series(epsilon).rolling(window=31, center=True).std()
+    mask = ~np.isnan(rolling_vol)
+    t_clean = t_train[1:][mask]
+    v_clean = rolling_vol[mask].values
+    X = np.column_stack([np.ones(len(t_clean)), np.cos(w * t_clean), np.sin(w * t_clean)])
+    params = np.linalg.lstsq(X, v_clean, rcond=None)[0]
+    return params
+
+def compute_seasonal_vol(t, params, w=2*np.pi/365.25):
+    a, b, c = params
+    return np.clip(a + b*np.cos(w*t) + c*np.sin(w*t), 1e-4, None)
+
 #Task 3: Seasonal volatility 
 
 def plot_rolling_volatility(epsilon, rolling_vol, dates):
@@ -263,7 +276,7 @@ def plot_simulated_paths(paths, mu_t, n_plot=30):
 
 #Path 2.6: Request for Quote price - simulate many MC paths, and compute prices for each contract in the quote 
     
-def quote_price_engine(contracts_df, M, phi, sigma_t_full, beta_hat, r, X0):
+def quote_price_engine(contracts_df, M, phi, sigma_t_full, beta_hat, r, X0, t0):
     """
     Prices of all contracts in the contract specifications using Monte Carlo simulation.
     Returns a DataFrame with contract_id and Monte Carlo price.
@@ -282,11 +295,10 @@ def quote_price_engine(contracts_df, M, phi, sigma_t_full, beta_hat, r, X0):
         #number of days in contract
         n_days = (end_date - start_date).days + 1
         #create future t index
-        t0 = len(sigma_t_full)  #start after historical data
         t_future = np.arange(t0, t0 + n_days)
-
         mu_future = compute_seasonal_mean(t_future, beta_hat)
-        sigma_future = np.tile(sigma_t_full, int(np.ceil(n_days / len(sigma_t_full))))[:n_days]
+        sigma_future = compute_seasonal_vol(t_future, sigma_t_full)
+
         paths = simulate_mc_paths(M, n_days, phi, sigma_future, mu_future, X0)
 
         #compute payoffs depending on contract type
@@ -441,6 +453,31 @@ def plot_payoff_boxplots(priced_contracts):
     plt.savefig("results/payoff_boxplots.png", dpi=150)
     plt.show()
 
+def evaluate_model(phi, u_test, y_test, residuals_train, vol_params, t_test):
+    """
+    Computes RMSE_T and RMSE_sigma on the test set.
+    """
+    residuals_test = y_test - u_test
+
+    # one-day-ahead forecast: mu(u) + phi * X(u-1)
+    # X(u-1) is the lagged actual residual, starting from last training residual
+    X_lag = np.concatenate([[residuals_train[-1]], residuals_test[:-1]])
+    T_hat = u_test + phi * X_lag
+    rmse_T = np.sqrt(np.mean((T_hat - y_test) ** 2))
+
+    # empirical volatility on test set: rolling std of test innovations
+    epsilon_test = residuals_test[1:] - phi * residuals_test[:-1]
+    empirical_vol = pd.Series(epsilon_test).rolling(window=31, center=True).std().bfill().ffill().values
+
+    sigma_fitted = compute_seasonal_vol(t_test[1:], vol_params)
+
+    rmse_sigma = np.sqrt(np.mean((sigma_fitted - empirical_vol) ** 2))
+
+    print(f"RMSE_T: {rmse_T:.4f} °C")
+    print(f"RMSE_sigma: {rmse_sigma:.4f} °C")
+
+    return rmse_T, rmse_sigma
+
 def main():
     #Pull raw data, print some metadata
     response = pull_data()
@@ -520,47 +557,54 @@ def main():
 
     #Part 2.5: Pricing of Weather Derivatives 
 
-    #Visualize simulated temperatue paths 
+    vol_params = fit_seasonal_volatility(epsilon, t_train)
+
+    # Visualize simulated temperature paths
     M = 30
-    n_days = 365*2
+    n_days = 365 * 2
     t_future = np.arange(len(daily_dataframe_cleaned),
-                     len(daily_dataframe_cleaned) + n_days)
-
+                         len(daily_dataframe_cleaned) + n_days)
     mu_future = compute_seasonal_mean(t_future, beta_hat)
-
-    rolling_vol = rolling_vol.bfill().ffill()
-    sigma_t = rolling_vol.values 
-    sigma_future = np.tile(sigma_t, int(np.ceil(n_days / len(sigma_t))))[:n_days] # rolling volatility for the future period 
+    sigma_future = compute_seasonal_vol(t_future, vol_params)
     X0 = residuals_train[-1]
 
     paths = simulate_mc_paths(M, n_days, phi, sigma_future, mu_future, X0)
     plot_simulated_paths(paths, mu_future)
 
-    #Part 2.6: Request for Quote price 
+    # Part 2.6: Request for Quote price
     contracts_df = pd.read_csv("contract_specifications.csv")
-
     M_mc = 10000
-
-    r = contracts_df['rate'].iloc[0]  # assuming same risk-free rate for all contracts
+    r = contracts_df['rate'].iloc[0]
 
     priced_contracts = quote_price_engine(
         contracts_df,
         M=M_mc,
         phi=phi,
-        sigma_t_full=sigma_t,
+        sigma_t_full=vol_params,
         beta_hat=beta_hat,
         r=r,
-        X0=X0
+        X0=X0,
+        t0 = len(daily_dataframe_cleaned)
     )
 
     # Print prices
-    print(priced_contracts[['contract_id','price']])
+    print(priced_contracts[['contract_id', 'price']])
 
-    #Plots 
+    # Plots
     plot_payoff_boxplots(priced_contracts)
     summary = plot_pricing_summary_table(priced_contracts)
     print(summary.to_string(index=False))
 
+    #Part 2.7: Evaluation Protocol 
 
+    evaluate_model(
+        phi=phi,
+        u_test=u_test,
+        y_test=y_test,
+        residuals_train=residuals_train,
+        vol_params=vol_params,
+        t_test=t_test
+    )
+    
 if __name__ == "__main__":
     main()
