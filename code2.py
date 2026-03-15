@@ -10,6 +10,8 @@ import os
 
 os.makedirs("results", exist_ok=True)
 
+#Part 2.3: Data preparation
+
 def pull_data():
     cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
@@ -101,7 +103,7 @@ def train_test_split(daily_dataframe_cleaned):
 
     return train_df, test_df
 
-#Part 2: Stochastic model of temperature 
+#Part 2.4: Stochastic model of temperature 
 
 #Task 1: Deterministic seasonal fit 
 
