@@ -181,7 +181,7 @@ def calculate_cat(temperatures):
     return np.sum(temperatures)
 
 def calculate_hdd(temperatures, threshold = 18):
-    return np.sum(max(threshold-temperatures,0))
+    return np.sum(np.maximum(threshold-temperatures,0))
 
 def calculate_cat_payoff(temperatures, N, K):
     return N * max(calculate_cat(temperatures) - K, 0)
@@ -200,27 +200,71 @@ def asian_option_payoff(day_degree_index, cap, floor, alpha, beta, strike, call_
     collar = min(alpha * max(day_degree_index - call_strike, 0), cap) - min(beta * max(put_strike - day_degree_index,0), floor)
     return call_option_cap, put_option_floor, collar
 
-def simulate_mc_paths():
-    pass
+def simulate_mc_paths(M, n_days, phi, sigma_t, mu_t, X0=0):
+    paths = np.zeros((M, n_days))
+    residuals = np.zeros((M, n_days))
 
-def monte_carlo_price(M, n_days, r, tau2, N, cat_strike=None, hdd_strike=None):
-    paths = simulate_mc_paths(M, n_days)
+    residuals[:, 0] = X0
+    for t in range(1, n_days):
+        z = np.random.normal(0, 1, M)
+
+        residuals[:, t] = (phi * residuals[:, t-1] + sigma_t[t] * z)
+
+    paths = mu_t[:n_days] + residuals
+
+    return paths
+
+def compute_index_payoffs(paths, N, cat_strike=None, hdd_strike=None):
     cat_payoffs = []
     hdd_payoffs = []
 
     for path in paths:
         if cat_strike is not None:
-            cat_payoffs.append(calculate_cat_payoff(path, N, cat_strike))
-        if hdd_strike is not None:
-            hdd_payoffs.append(calculate_hdd_payoff(path, N, hdd_strike))
-    
-    prices = {}
-    if cat_payoffs:
-        prices["CAT"] = np.exp(-r * tau2) * np.mean(cat_payoffs)
-    if hdd_payoffs:
-        prices["HDD"] = np.exp(-r * tau2) * np.mean(hdd_payoffs)
+            index = calculate_cat(path)
+            cat_payoffs.append(N * max(index - cat_strike, 0))
 
-    return prices
+        if hdd_strike is not None:
+            index = calculate_hdd(path)
+            hdd_payoffs.append(N * max(index - hdd_strike, 0))
+
+    return np.array(cat_payoffs), np.array(hdd_payoffs)
+
+def monte_carlo_price(payoffs, r, tau):
+    price = np.exp(-r * tau) * np.mean(payoffs)
+    return price
+
+def plot_simulated_paths(paths, mu_t, n_plot=30):
+    """
+    Plot a subset of simulated temperature paths together with the deterministic mean.
+    """
+    M, n_days = paths.shape
+
+    # randomly select paths
+    idx = np.random.choice(M, size=n_plot, replace=False)
+
+    plt.figure(figsize=(12,6))
+
+    for i in idx:
+        plt.plot(paths[i], alpha=0.35, linewidth=1)
+
+    # deterministic mean
+    plt.plot(mu_t[:n_days], color="black", linewidth=1.5, label="Deterministic mean")
+
+    plt.title("Simulated Temperature Paths")
+    plt.xlabel("Day of Contract")
+    plt.ylabel("Temperature (°C)")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig("results/simulated_temperature_paths.png", dpi=150)
+    plt.show()
+
+#Path 2.6: Request for Quote price - simulate many MC paths, and compute prices for each contract in the quote 
+    
+def quote_price_engine(contracts, M, n_days, phi, sigma_t, mu_t, r):
+    
+
+    pass
 
 def main():
     #Pull raw data, print some metadata
@@ -298,6 +342,24 @@ def main():
     train_df['date'] = pd.to_datetime(train_df['date'])
     rolling_vol = pd.Series(epsilon).rolling(window=31, center=True).std()
     plot_rolling_volatility(epsilon, rolling_vol, train_df['date'].iloc[1:].values)
-    
+
+    #Part 2.5: Pricing of Weather Derivatives 
+
+    #Visualize simulated temperatue paths 
+    M = 30
+    n_days = 365*2
+    t_future = np.arange(len(daily_dataframe_cleaned),
+                     len(daily_dataframe_cleaned) + n_days)
+
+    mu_future = compute_seasonal_mean(t_future, beta_hat)
+
+    rolling_vol = rolling_vol.bfill().ffill()
+    sigma_t = rolling_vol.values 
+    sigma_future = np.tile(sigma_t, int(np.ceil(n_days / len(sigma_t))))[:n_days] # rolling volatility for the future period 
+    X0 = residuals_train[-1]
+
+    paths = simulate_mc_paths(M, n_days, phi, sigma_future, mu_future, X0)
+    plot_simulated_paths(paths, mu_future)
+
 if __name__ == "__main__":
     main()
