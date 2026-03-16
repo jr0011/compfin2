@@ -355,10 +355,10 @@ def plot_pricing_summary_table(priced_contracts):
 
     html_rows = ""
     for i, r in enumerate(rows):
-        bg      = "#f5f9ff" if r['Type'] == 'CAT' else "#fffaf0"
-        stripe  = "" if i % 2 == 0 else "filter:brightness(0.96)"
-        type_color = "#0C447C" if r['Type'] == 'CAT' else "#633806"
-        type_bg    = "#E6F1FB" if r['Type'] == 'CAT' else "#FAEEDA"
+        bg         = "#EEF3FC" if r['Type'] == 'CAT' else "#F4F4F4"
+        stripe     = "" if i % 2 == 0 else "filter:brightness(0.97)"
+        type_color = "#1338BE" if r['Type'] == 'CAT' else "#4A4A4A"
+        type_bg    = "#D6E0FA" if r['Type'] == 'CAT' else "#E2E2E2"
         html_rows += f"""
         <tr style="background:{bg};{stripe}">
             <td>{r['Contract']}</td>
@@ -377,16 +377,16 @@ def plot_pricing_summary_table(priced_contracts):
 <meta charset="utf-8">
 <title>Contract Pricing Summary</title>
 <style>
-  body {{ font-family: -apple-system, sans-serif; padding: 24px; background: #fafafa; }}
+  body {{ font-family: -apple-system, sans-serif; padding: 24px; background: #F7F7F7; }}
   h2   {{ font-size: 18px; font-weight: 500; margin-bottom: 16px; color: #222; }}
   table {{ border-collapse: collapse; width: 100%; background: white;
            border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }}
-  th   {{ background: #2C2C2A; color: white; font-size: 12px; font-weight: 500;
+  th   {{ background: #1338BE; color: white; font-size: 12px; font-weight: 500;
           padding: 10px 12px; text-align: left; }}
   td   {{ padding: 8px 12px; font-size: 12px; color: #333;
-          border-bottom: 0.5px solid #e8e8e8; }}
+          border-bottom: 0.5px solid #DCDCDC; }}
   tr:last-child td {{ border-bottom: none; }}
-  tr:hover td {{ background: rgba(0,0,0,0.03) !important; }}
+  tr:hover td {{ background: rgba(19,56,190,0.05) !important; }}
 </style>
 </head>
 <body>
@@ -407,8 +407,6 @@ def plot_pricing_summary_table(priced_contracts):
     with open(path, "w") as f:
         f.write(html)
     print(f"Summary table saved to {path} — open in browser to view.")
-
-    # also print to terminal
     print(summary_df.to_string(index=False))
     return summary_df
 
