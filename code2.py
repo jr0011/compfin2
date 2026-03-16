@@ -538,8 +538,8 @@ def main():
     #Use the residuals of the training set: deseasonalized: y_train - u_train 
 
     phi, kappa, sigma_e, aic, bic, epsilon = fit_ar1_residuals(residuals_train)
-    print("AR(1) coefficient (phi) (don't have to report):", phi)
-    print("Mean reversion rate (kappa) (don't have to report):", kappa)
+    print("AR(1) coefficient (phi) (don't have to report but can):", phi)
+    print("Mean reversion rate (kappa) (don't have to report but can):", kappa)
     print("Innovation std (sigma_e):", sigma_e)
     print("AIC:", aic)
     print("BIC:", bic)
